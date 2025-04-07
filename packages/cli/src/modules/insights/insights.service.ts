@@ -17,10 +17,10 @@ import { OnShutdown } from '@/decorators/on-shutdown';
 import { InsightsMetadata } from '@/modules/insights/database/entities/insights-metadata';
 import { InsightsRaw } from '@/modules/insights/database/entities/insights-raw';
 
+import { InsightsCompactionService } from './compaction/insights.compaction.service';
 import type { PeriodUnit, TypeUnit } from './database/entities/insights-shared';
 import { NumberToType } from './database/entities/insights-shared';
 import { InsightsByPeriodRepository } from './database/repositories/insights-by-period.repository';
-import { InsightsRawRepository } from './database/repositories/insights-raw.repository';
 import { InsightsConfig } from './insights.config';
 
 const config = Container.get(InsightsConfig);
@@ -63,8 +63,6 @@ type BufferedInsight = Pick<InsightsRaw, 'type' | 'value' | 'timestamp'> & {
 export class InsightsService {
 	private readonly cachedMetadata: Map<string, InsightsMetadata> = new Map();
 
-	private compactInsightsTimer: NodeJS.Timer | undefined;
-
 	private bufferedInsights: Set<BufferedInsight> = new Set();
 
 	private flushInsightsRawBufferTimer: NodeJS.Timer | undefined;
@@ -76,23 +74,12 @@ export class InsightsService {
 	constructor(
 		private readonly sharedWorkflowRepository: SharedWorkflowRepository,
 		private readonly insightsByPeriodRepository: InsightsByPeriodRepository,
-		private readonly insightsRawRepository: InsightsRawRepository,
+		private readonly insightsCompactionService: InsightsCompactionService,
 		private readonly logger: Logger,
 	) {
 		this.logger = this.logger.scoped('insights');
-		this.initializeCompaction();
 		this.scheduleFlushing();
-	}
-
-	initializeCompaction() {
-		if (this.compactInsightsTimer !== undefined) {
-			clearInterval(this.compactInsightsTimer);
-		}
-		const intervalMilliseconds = config.compactionIntervalMinutes * 60 * 1000;
-		this.compactInsightsTimer = setInterval(
-			async () => await this.compactInsights(),
-			intervalMilliseconds,
-		);
+		this.insightsCompactionService.scheduleCompaction();
 	}
 
 	scheduleFlushing() {
@@ -113,11 +100,7 @@ export class InsightsService {
 
 	@OnShutdown()
 	async shutdown() {
-		if (this.compactInsightsTimer !== undefined) {
-			clearInterval(this.compactInsightsTimer);
-			this.compactInsightsTimer = undefined;
-		}
-
+		this.insightsCompactionService.disposeCompaction();
 		if (this.flushInsightsRawBufferTimer !== undefined) {
 			clearInterval(this.flushInsightsRawBufferTimer);
 			this.flushInsightsRawBufferTimer = undefined;
@@ -280,72 +263,6 @@ export class InsightsService {
 		// Add the flush promise to the set of flushes in progress for shutdown await
 		this.flushesInProgress.add(flushPromise);
 		await flushPromise;
-	}
-
-	async compactInsights() {
-		let numberOfCompactedRawData: number;
-
-		// Compact raw data to hourly aggregates
-		do {
-			numberOfCompactedRawData = await this.compactRawToHour();
-		} while (numberOfCompactedRawData > 0);
-
-		let numberOfCompactedHourData: number;
-
-		// Compact hourly data to daily aggregates
-		do {
-			numberOfCompactedHourData = await this.compactHourToDay();
-		} while (numberOfCompactedHourData > 0);
-
-		let numberOfCompactedDayData: number;
-		// Compact daily data to weekly aggregates
-		do {
-			numberOfCompactedDayData = await this.compactDayToWeek();
-		} while (numberOfCompactedDayData > 0);
-	}
-
-	// Compacts raw data to hourly aggregates
-	async compactRawToHour() {
-		// Build the query to gather raw insights data for the batch
-		const batchQuery = this.insightsRawRepository.getRawInsightsBatchQuery(
-			config.compactionBatchSize,
-		);
-
-		return await this.insightsByPeriodRepository.compactSourceDataIntoInsightPeriod({
-			sourceBatchQuery: batchQuery,
-			sourceTableName: this.insightsRawRepository.metadata.tableName,
-			periodUnitToCompactInto: 'hour',
-		});
-	}
-
-	// Compacts hourly data to daily aggregates
-	async compactHourToDay() {
-		// get hour data query for batching
-		const batchQuery = this.insightsByPeriodRepository.getPeriodInsightsBatchQuery({
-			periodUnitToCompactFrom: 'hour',
-			compactionBatchSize: config.compactionBatchSize,
-			maxAgeInDays: config.compactionHourlyToDailyThresholdDays,
-		});
-
-		return await this.insightsByPeriodRepository.compactSourceDataIntoInsightPeriod({
-			sourceBatchQuery: batchQuery,
-			periodUnitToCompactInto: 'day',
-		});
-	}
-
-	// Compacts daily data to weekly aggregates
-	async compactDayToWeek() {
-		// get daily data query for batching
-		const batchQuery = this.insightsByPeriodRepository.getPeriodInsightsBatchQuery({
-			periodUnitToCompactFrom: 'day',
-			compactionBatchSize: config.compactionBatchSize,
-			maxAgeInDays: config.compactionDailyToWeeklyThresholdDays,
-		});
-
-		return await this.insightsByPeriodRepository.compactSourceDataIntoInsightPeriod({
-			sourceBatchQuery: batchQuery,
-			periodUnitToCompactInto: 'week',
-		});
 	}
 
 	async getInsightsSummary(): Promise<InsightsSummary> {

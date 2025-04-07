@@ -22,6 +22,7 @@ import { createTeamProject } from '@test-integration/db/projects';
 import { createWorkflow } from '@test-integration/db/workflows';
 import * as testDb from '@test-integration/test-db';
 
+import { InsightsCompactionService } from '../compaction/insights.compaction.service';
 import {
 	createMetadata,
 	createRawInsightsEvent,
@@ -260,7 +261,6 @@ describe('workflowExecuteAfterHandler - cacheMetadata', () => {
 	const sharedWorkflowRepositoryMock: jest.Mocked<SharedWorkflowRepository> = {
 		manager: entityManagerMock,
 	} as unknown as jest.Mocked<SharedWorkflowRepository>;
-	const insightsRawRepository: jest.Mocked<InsightsRawRepository> = mock<InsightsRawRepository>();
 
 	const startedAt = DateTime.utc();
 	const stoppedAt = startedAt.plus({ seconds: 5 });
@@ -289,7 +289,7 @@ describe('workflowExecuteAfterHandler - cacheMetadata', () => {
 		insightsService = new InsightsService(
 			sharedWorkflowRepositoryMock,
 			Container.get(InsightsByPeriodRepository),
-			insightsRawRepository,
+			mock<InsightsCompactionService>(),
 			mock<Logger>(),
 		);
 	});
@@ -441,7 +441,7 @@ describe('workflowExecuteAfterHandler - flushEvents', () => {
 		insightsService = new InsightsService(
 			sharedWorkflowRepositoryMock,
 			mock<InsightsByPeriodRepository>(),
-			mock<InsightsRawRepository>(),
+			mock<InsightsCompactionService>(),
 			logger,
 		);
 	});
@@ -699,7 +699,7 @@ describe('compaction', () => {
 			},
 		])('$name', async ({ timestamps, batches }) => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsRawRepository = Container.get(InsightsRawRepository);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 
@@ -716,7 +716,7 @@ describe('compaction', () => {
 			}
 
 			// ACT
-			const compactedRows = await insightsService.compactRawToHour();
+			const compactedRows = await insightsCompactionService.compactRawToHour();
 
 			// ASSERT
 			expect(compactedRows).toBe(timestamps.length);
@@ -730,7 +730,7 @@ describe('compaction', () => {
 
 		test('batch compaction split events in hourly insight periods', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsRawRepository = Container.get(InsightsRawRepository);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 
@@ -747,7 +747,7 @@ describe('compaction', () => {
 			}
 
 			// ACT
-			await insightsService.compactInsights();
+			await insightsCompactionService.compactInsights();
 
 			// ASSERT
 			await expect(insightsRawRepository.count()).resolves.toBe(0);
@@ -761,7 +761,7 @@ describe('compaction', () => {
 
 		test('batch compaction split events in hourly insight periods by type and workflow', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsRawRepository = Container.get(InsightsRawRepository);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 
@@ -793,7 +793,7 @@ describe('compaction', () => {
 			}
 
 			// ACT
-			await insightsService.compactInsights();
+			await insightsCompactionService.compactInsights();
 
 			// ASSERT
 			await expect(insightsRawRepository.count()).resolves.toBe(0);
@@ -839,7 +839,7 @@ describe('compaction', () => {
 
 		test('should return the number of compacted events', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 
 			const project = await createTeamProject();
 			const workflow = await createWorkflow({}, project);
@@ -854,7 +854,7 @@ describe('compaction', () => {
 			}
 
 			// ACT
-			const numberOfCompactedData = await insightsService.compactRawToHour();
+			const numberOfCompactedData = await insightsCompactionService.compactRawToHour();
 
 			// ASSERT
 			expect(numberOfCompactedData).toBe(100);
@@ -862,7 +862,7 @@ describe('compaction', () => {
 
 		test('works with data in the compacted table', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsRawRepository = Container.get(InsightsRawRepository);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 
@@ -889,7 +889,7 @@ describe('compaction', () => {
 			await createRawInsightsEvents(workflow, events);
 
 			// ACT
-			await insightsService.compactInsights();
+			await insightsCompactionService.compactInsights();
 
 			// ASSERT
 			await expect(insightsRawRepository.count()).resolves.toBe(0);
@@ -903,12 +903,12 @@ describe('compaction', () => {
 
 		test('works with data bigger than the batch size', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsRawRepository = Container.get(InsightsRawRepository);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 
 			// spy on the compactRawToHour method to check if it's called multiple times
-			const rawToHourSpy = jest.spyOn(insightsService, 'compactRawToHour');
+			const rawToHourSpy = jest.spyOn(insightsCompactionService, 'compactRawToHour');
 
 			const project = await createTeamProject();
 			const workflow = await createWorkflow({}, project);
@@ -924,7 +924,7 @@ describe('compaction', () => {
 			await createRawInsightsEvents(workflow, events);
 
 			// ACT
-			await insightsService.compactInsights();
+			await insightsCompactionService.compactInsights();
 
 			// ASSERT
 			expect(rawToHourSpy).toHaveBeenCalledTimes(3);
@@ -940,18 +940,18 @@ describe('compaction', () => {
 			jest.useFakeTimers();
 			try {
 				// ARRANGE
-				const insightsService = Container.get(InsightsService);
-				insightsService.initializeCompaction();
+				const insightsCompactionService = Container.get(InsightsCompactionService);
+				insightsCompactionService.scheduleCompaction();
 
 				// spy on the compactInsights method to check if it's called
-				insightsService.compactInsights = jest.fn();
+				insightsCompactionService.compactInsights = jest.fn();
 
 				// ACT
 				// advance by 1 hour and 1 minute
 				jest.advanceTimersByTime(1000 * 60 * 61);
 
 				// ASSERT
-				expect(insightsService.compactInsights).toHaveBeenCalledTimes(1);
+				expect(insightsCompactionService.compactInsights).toHaveBeenCalledTimes(1);
 			} finally {
 				jest.useRealTimers();
 			}
@@ -988,7 +988,7 @@ describe('compaction', () => {
 			},
 		])('$name', async ({ periodStarts, batches }) => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 
 			const project = await createTeamProject();
@@ -1005,7 +1005,7 @@ describe('compaction', () => {
 			}
 
 			// ACT
-			const compactedRows = await insightsService.compactHourToDay();
+			const compactedRows = await insightsCompactionService.compactHourToDay();
 
 			// ASSERT
 			expect(compactedRows).toBe(periodStarts.length);
@@ -1022,7 +1022,7 @@ describe('compaction', () => {
 
 		test('recent insight periods should not be compacted', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 
 			const project = await createTeamProject();
 			const workflow = await createWorkflow({}, project);
@@ -1036,7 +1036,7 @@ describe('compaction', () => {
 			});
 
 			// ACT
-			const compactedRows = await insightsService.compactHourToDay();
+			const compactedRows = await insightsCompactionService.compactHourToDay();
 
 			// ASSERT
 			expect(compactedRows).toBe(0);
@@ -1075,7 +1075,7 @@ describe('compaction', () => {
 			},
 		])('$name', async ({ periodStarts, batches }) => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 
 			const project = await createTeamProject();
@@ -1092,7 +1092,7 @@ describe('compaction', () => {
 			}
 
 			// ACT
-			const compactedRows = await insightsService.compactDayToWeek();
+			const compactedRows = await insightsCompactionService.compactDayToWeek();
 
 			// ASSERT
 			expect(compactedRows).toBe(periodStarts.length);
@@ -1110,7 +1110,7 @@ describe('compaction', () => {
 
 		test('recent insight periods should not be compacted', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 
 			const project = await createTeamProject();
 			const workflow = await createWorkflow({}, project);
@@ -1123,7 +1123,7 @@ describe('compaction', () => {
 			});
 
 			// ACT
-			const compactedRows = await insightsService.compactDayToWeek();
+			const compactedRows = await insightsCompactionService.compactDayToWeek();
 
 			// ASSERT
 			expect(compactedRows).toBe(0);
@@ -1133,7 +1133,7 @@ describe('compaction', () => {
 	describe('compaction threshold configuration', () => {
 		test('insights by period older than the hourly to daily threshold are not compacted', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 			const config = Container.get(InsightsConfig);
 
@@ -1161,7 +1161,7 @@ describe('compaction', () => {
 			});
 
 			// ACT
-			const compactedRows = await insightsService.compactHourToDay();
+			const compactedRows = await insightsCompactionService.compactHourToDay();
 
 			// ASSERT
 			expect(compactedRows).toBe(1); // Only the event within the threshold should be compacted
@@ -1175,7 +1175,7 @@ describe('compaction', () => {
 
 		test('insights by period older than the daily to weekly threshold are not compacted', async () => {
 			// ARRANGE
-			const insightsService = Container.get(InsightsService);
+			const insightsCompactionService = Container.get(InsightsCompactionService);
 			const insightsByPeriodRepository = Container.get(InsightsByPeriodRepository);
 			const config = Container.get(InsightsConfig);
 
@@ -1202,7 +1202,7 @@ describe('compaction', () => {
 			});
 
 			// ACT
-			const compactedRows = await insightsService.compactDayToWeek();
+			const compactedRows = await insightsCompactionService.compactDayToWeek();
 
 			// ASSERT
 			expect(compactedRows).toBe(1); // Only the event within the threshold should be compacted
