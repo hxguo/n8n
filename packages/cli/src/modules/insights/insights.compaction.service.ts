@@ -1,9 +1,8 @@
 import { Container, Service } from '@n8n/di';
-import { Logger } from 'n8n-core';
 
-import { InsightsByPeriodRepository } from '../database/repositories/insights-by-period.repository';
-import { InsightsRawRepository } from '../database/repositories/insights-raw.repository';
-import { InsightsConfig } from '../insights.config';
+import { InsightsByPeriodRepository } from './database/repositories/insights-by-period.repository';
+import { InsightsRawRepository } from './database/repositories/insights-raw.repository';
+import { InsightsConfig } from './insights.config';
 
 const config = Container.get(InsightsConfig);
 
@@ -14,20 +13,17 @@ export class InsightsCompactionService {
 	constructor(
 		private readonly insightsByPeriodRepository: InsightsByPeriodRepository,
 		private readonly insightsRawRepository: InsightsRawRepository,
-		private readonly logger: Logger,
-	) {
-		this.logger = this.logger.scoped('insights');
-	}
+	) {}
 
-	scheduleCompaction() {
-		this.disposeCompaction();
+	startCompactionTimer() {
+		this.stopCompactionTimer();
 		this.compactInsightsTimer = setInterval(
 			async () => await this.compactInsights(),
 			config.compactionIntervalMinutes * 60 * 1000,
 		);
 	}
 
-	disposeCompaction() {
+	stopCompactionTimer() {
 		if (this.compactInsightsTimer !== undefined) {
 			clearInterval(this.compactInsightsTimer);
 			this.compactInsightsTimer = undefined;
